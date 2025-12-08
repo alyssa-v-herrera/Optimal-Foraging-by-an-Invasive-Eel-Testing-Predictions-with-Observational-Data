@@ -1,0 +1,523 @@
+---
+title: "Asian Swamp Eel Diet Data "
+author: "Brandon Güell & Alyssa Herrera"
+date: "12/7/2023"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+PDF Knit settings
+```{r global_options}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+```
+
+#Load Packages/Data
+```{r}
+library(tidyr)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(lme4)
+library(car)
+library(lmerTest)
+library(emmeans)
+library(EnvStats)
+
+eeldiet <- read.csv("Asian Swamp Eel Dissection.csv")
+```
+
+# Summary Statistics
+```{r}
+# Adding Size Classes
+eeldiet = eeldiet %>%
+  mutate(Size_class = case_when(TL_mm < 300 ~ 'A',
+                                between(TL_mm, 300, 450) ~ 'B',
+                                between(TL_mm, 450, 600) ~ 'C',
+                                TL_mm > 600 ~ 'D'))
+```
+
+##Sizes by Region
+```{r}
+#Total sample size from each region
+eel_Regions = eeldiet %>%
+  filter(Region != "NA") %>%
+  group_by(Region) %>%
+  summarize(
+    Without_Contents = sum(NOPREY == 1, na.rm = TRUE),
+    With_Contents = sum(is.na(NOPREY) | NOPREY == ""),
+    Total_Eels = n())
+
+#Swamp eel size summary statistics by region
+eel_Regions = eeldiet %>%
+  group_by(Region) %>%
+  summarise(mean_size = mean(TL_mm, na.rm=T), SE= sd(TL_mm,na.rm=T)/sqrt(length(TL_mm)), SD = sd(TL_mm, na.rm=T), min= min(TL_mm, na.rm=T), max= max(TL_mm, na.rm=T), sample_size_unique=n_distinct(TL_mm, na.rm=T), sample_size=n())
+eel_Regions
+```
+
+Eel measurements
+```{r}
+#Eel Sizes per region
+eel_size = eeldiet %>%
+  summarise(mean_size = mean(TL_mm, na.rm=T), SE= sd(TL_mm,na.rm=T)/sqrt(length(TL_mm)), SD = sd(TL_mm, na.rm=T), min= min(TL_mm, na.rm=T), max= max(TL_mm, na.rm=T), sample_size_unique=n_distinct(TL_mm, na.rm=T), sample_size=n())
+eel_size
+
+eel_size = eeldiet %>%
+  group_by(Region) %>%
+  summarise(mean_size = mean(TL_mm, na.rm=T), SE= sd(TL_mm,na.rm=T)/sqrt(length(TL_mm)), SD = sd(TL_mm, na.rm=T), min= min(TL_mm, na.rm=T), max= max(TL_mm, na.rm=T), sample_size_unique=n_distinct(TL_mm, na.rm=T), sample_size=n())
+eel_size
+
+eel_size = eeldiet %>%
+  group_by(Size_class) %>%
+  summarise(mean_size = mean(TL_mm, na.rm=T), SE= sd(TL_mm,na.rm=T)/sqrt(length(TL_mm)), SD = sd(TL_mm, na.rm=T), min= min(TL_mm, na.rm=T), max= max(TL_mm, na.rm=T), sample_size_unique=n_distinct(TL_mm, na.rm=T), sample_size=n())
+eel_size
+```
+
+##Cannibalism 
+```{r}
+region_summary <- eeldiet %>%
+  filter(Region != "NA") %>%
+  group_by(Invasion_Status) %>%
+  summarise(
+    total = n(),
+    cannibal_count = sum(MONALB == 1),
+    prop_cannibal = cannibal_count / total)
+
+# Calculate mean years since invasion for each region
+eeldiet$Years_Since_Invasion <- as.numeric(eeldiet$Years_Since_Invasion)
+region_years <- eeldiet %>%
+  group_by(Region) %>%
+  summarise(years = round(mean(Years_Since_Invasion, na.rm = TRUE), 0))
+
+# Summarize with standard error
+region_summary <- eeldiet %>%
+  filter(Region != "NA") %>%
+  group_by(Region) %>%
+  summarise(
+    total = n(),
+    cannibal_count = sum(MONALB == 1),
+    prop_cannibal = cannibal_count / total,
+    se = sqrt((prop_cannibal * (1 - prop_cannibal)) / total))
+
+region_summary <- region_summary %>%
+  left_join(region_years, by = "Region")
+max_y <- max(region_summary$prop_cannibal + region_summary$se, na.rm = TRUE)
+
+# Plot with error bars
+Cannibalism_Proportions <- ggplot(region_summary, aes(x =  reorder(Region, -years), y = prop_cannibal)) +
+  geom_bar(stat = "identity", fill = "#0072B2") +
+  # Avg years since invasion
+  geom_text(aes(label = paste0(years, " years"), y = max_y + 0.02), size = 4) +
+  labs(
+    x = "Region",
+    y = "Proportion of eels exhibiting cannibalism"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "black", size = 0.3),
+    axis.title.x = element_text(size = 12, margin = margin(t = 8)),  
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),  
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1),  
+    axis.text.y = element_text(size = 10)
+  )
+
+Cannibalism_Proportions
+ggsave("Cannibalism_Proportions.eps", Cannibalism_Proportions, width = 6, height = 4, dpi = 800)
+
+# Create contingency table
+table_region_cannibal <- table(eeldiet$Region, eeldiet$MONALB)
+
+# Perform Chi-squared test
+chisq.test(table_region_cannibal)
+
+# Create contingency table
+table_region_cannibal <- table(eeldiet$Invasion_Status, eeldiet$MONALB)
+
+# Perform Chi-squared test
+chisq.test(table_region_cannibal)
+```
+
+#Frequency of occurence
+```{r}
+#Removing eels without gut contents from data
+eeldiet = eeldiet[-(which(eeldiet$NOPREY %in% 1)),]
+
+#Creating Prey categories
+eeldiet = eeldiet %>%
+  mutate(Fish = CICSPP+CICURO+ELAEVE+ENNGLO+FUNCHR+GAMHOL+HETFOR+JORFLO+LUCGOO+MONALB+UNIFIS+ HEMLET) %>%
+  mutate(Shrimp = PALPAL) %>%
+  mutate(Crayfish = PROFAL) %>%
+  mutate(Odonata= BRAGRA+CELSPP+COENAG+ERYSIM+ERYSPP+LIBSPP+MACBAL+ODONAT+PACLON+ANAJUN+CORING) %>%
+  mutate(Hemiptera = BELSPP+PELBAL+PELFEM+PELSPP) %>%
+  mutate(Coleoptera = COLEOL+DYTCEL+DYTSPP+HYDSPP+NEOUNI) %>%
+  mutate(Gastropoda = APHPAC+HAISPP+ PLASPP) %>%
+  mutate(Diptera = STRATI+CYBSPP+ DOLICH+TABANI) %>%
+  mutate(Unknown_Insects = UNIINV) %>%
+  mutate(Amphipoda = AMPHOP) %>%
+  mutate(Miscellaneous = DETRIT+ EGG+ RANATP+ UNIDEN+ PHIFLO)
+eeldiet
+
+### Grouping master data table for occurrence summaries Manipulate Data tidyr
+eeldiet_occurences = eeldiet %>%
+  tidyr::gather(key = "Prey", value = "Count", Fish:Miscellaneous, na.rm = FALSE, convert = FALSE, factor_key = FALSE) %>%
+  arrange(Eel_count) %>%
+  mutate(Presence = case_when(Count > 0 ~ 1, Count == 0 ~ 0))
+eeldiet_occurences
+```
+
+### Percent Occurrence tables
+```{r}
+#Occurrence by PREY
+diet_occurences_summary_Prey <- eeldiet_occurences %>%
+  group_by(Prey) %>%
+  summarise(
+    occurrence = sum(Presence, na.rm = TRUE),
+    sample_size = n(),
+    frequency_occurrence = occurrence / sample_size,
+    se_frequency = sqrt((frequency_occurrence * (1 - frequency_occurrence)) / sample_size),
+    percent_occurrence = frequency_occurrence * 100,
+    se_percent = se_frequency * 100) %>%
+  arrange(Prey)
+diet_occurences_summary_Prey
+
+#Occurrence by REGION
+diet_occurences_summary_Region = eeldiet_occurences %>%
+  group_by(Prey, Region) %>%
+  summarise(N = sum(Count, na.rm=T),occurrence= sum(Presence, na.rm=T), sample_size=n(), percent_occurrence = (occurrence/(sample_size=n())*100), frequency_occurrence = (occurrence/(sample_size=n()))) %>%
+  arrange(Region)
+diet_occurences_summary_Region
+
+#Occurrence by SIZE CLASS
+diet_occurences_summary_size = eeldiet_occurences %>%
+  group_by(Prey, Size_class) %>%
+  summarise(N = sum(Count, na.rm=T), occurrence= sum(Presence, na.rm=T), sample_size=n(), percent_occurrence = (occurrence/(sample_size=n())*100), frequency_occurrence = (occurrence/(sample_size=n()))) %>%
+  arrange(Size_class)
+diet_occurences_summary_size
+
+#Occurrence by REGION & SIZE CLASS
+diet_occurences_summary_Region_Size = eeldiet_occurences %>%
+  group_by(Prey, Size_class, Region) %>%
+  summarise(occurrence= sum(Presence, na.rm=T), sample_size=n(), percent_occurrence = (occurrence/(sample_size=n())*100),frequency_occurrence = (occurrence/(sample_size=n()))) %>%
+  arrange(Size_class)
+diet_occurences_summary_Region_Size
+```
+
+###Summaries of filtered occurrence tables 
+```{r}
+#Descriptive Statistics of Occurrences
+eeldiet_occurences_summary = eeldiet_occurences %>%
+  group_by(Prey) %>%
+  summarise(mean = mean(Count, na.rm=T), SE= sd(Count,na.rm=T)/sqrt(length(Count)), SD = sd(Count, na.rm=T), min= min(Count, na.rm=T), max= max(Count, na.rm=T), sum= sum(Count, na.rm=T), sample_size_unique=n_distinct(Count, na.rm=T), sample_size=n())
+eeldiet_occurences_summary
+
+eeldiet_occurences_summary = eeldiet_occurences %>%
+  group_by(Region, Size_class) %>%
+  summarise(mean = mean(Count, na.rm=T), SE= sd(Count,na.rm=T)/sqrt(length(Count)), SD = sd(Count, na.rm=T), min= min(Count, na.rm=T), max= max(Count, na.rm=T), sum= sum(Count, na.rm=T), sample_size_unique=n_distinct(Count, na.rm=T), sample_size=n())
+eeldiet_occurences_summary
+
+eeldiet_occurences_summary = eeldiet_occurences %>%
+  group_by(Region) %>%
+  summarise(mean = mean(Count, na.rm=T), SE= sd(Count,na.rm=T)/sqrt(length(Count)), SD = sd(Count, na.rm=T), min= min(Count, na.rm=T), max= max(Count, na.rm=T), sum= sum(Count, na.rm=T), sample_size_unique=n_distinct(Count, na.rm=T), sample_size=n())
+eeldiet_occurences_summary
+
+eeldiet_occurences_summary = eeldiet_occurences %>%
+  group_by(Size_class, Prey) %>%
+  summarise(mean = mean(Count, na.rm=T), SE= sd(Count,na.rm=T)/sqrt(length(Count)), SD = sd(Count, na.rm=T), min= min(Count, na.rm=T), max= max(Count, na.rm=T), sum= sum(Count, na.rm=T), sample_size_unique=n_distinct(Count, na.rm=T), sample_size=n())
+eeldiet_occurences_summary
+```
+
+#Biomass of Prey
+```{r}
+#Replacing NA values with zeroes in order to add together biomass values
+eeldiet[,64:113][is.na(eeldiet[, 64:113])] <- 0
+
+#Adding together dry weight biomass of prey and organizing them into categories
+eeldiet_biomass = eeldiet %>%
+  mutate(Fish = CICSPP_mass+CICURO_mass+ELAEVE_mass+ENNGLO_mass+FUNCHR_mass+GAMHOL_mass+HETFOR_mass+JORFLO_mass+LUCGOO_mass+UNIFIS_mass+MONALB_mass+ HEMLET_mass) %>%
+  mutate(Shrimp = PALPAL_mass) %>%
+  mutate(Crayfish = PROFAL_mass) %>%
+  mutate(Odonata= BRAGRA_mass+CELSPP_mass+COENAG_mass+ERYSIM_mass+ERYSPP_mass+LIBSPP_mass+ MACBAL_mass+ODONAT_mass+PACLON_mass+ ANAJUN_mass+CORING_mass) %>%
+  mutate(Hemiptera = BELSPP_mass+PELBAL_mass+PELFEM_mass+PELSPP_mass) %>%
+  mutate(Coleoptera = COLEOL_mass +DYTCEL_mass+DYTSPP_mass+HYDSPP_mass+NEOUNI_mass) %>%
+  mutate(Gastropoda = APHPAC_mass+HAISPP_mass+ PLASPP_mass) %>%
+  mutate(Diptera = STRATI_mass+CYBSPP_mass+DOLICH_mass+TABANI_mass) %>%
+  mutate(Unknown_Insects = UNIINV_mass) %>%
+  mutate(Amphipoda = AMPHOP_mass) %>%
+  mutate(Miscellaneous = DETRIT_mass+ EGG_mass+ RANATP_mass+ UNIDEN_mass+ PHIFLO_mass) %>%
+  mutate(total_biomass= AMPHOP_mass+ ANAJUN_mass+ APHPAC_mass+	BELSPP_mass	+BRAGRA_mass+CELSPP_mass	+CICSPP_mass+	CICURO_mass+	COENAG_mass+CORING_mass+ CYBSPP_mass+	DETRIT_mass+ DOLICH_mass+	DYTCEL_mass+	DYTSPP_mass+	EGG_mass+	ELAEVE_mass+	ENNGLO_mass+	ERYSIM_mass+	ERYSPP_mass+	FUNCHR_mass+	GAMHOL_mass+	HAISPP_mass+ HEMLET_mass+	HETFOR_mass+ JORFLO_mass+	HYDSPP_mass+	LIBSPP_mass+	LUCGOO_mass+	MONALB_mass+	NEOUNI_mass+	ODONAT_mass+	PACLON_mass+	PALPAL_mass+	PELBAL_mass+	PELFEM_mass+	PELSPP_mass+ PHIFLO_mass+	PLASPP_mass+	PROFAL_mass+	RANATP_mass+	STRATI_mass+ TABANI_mass+	UNIDEN_mass+	UNIFIS_mass+	UNIINV_mass)
+eeldiet_biomass
+
+#Organizes data so each eel has a row reflecting a different prey category
+eeldiet_biomass = eeldiet_biomass %>%
+  tidyr::gather(key = "Prey", value = "Biomass", Fish:Miscellaneous, na.rm = FALSE, convert = FALSE, factor_key = FALSE) %>%
+  arrange(Eel_count)
+eeldiet_biomass
+
+#Finding percent biomass for each consumed category per individual eel
+eeldiet_biomass = eeldiet_biomass %>%
+  group_by(Prey) %>%
+  mutate(prop_biomass= (Biomass/total_biomass)*100)
+eeldiet_biomass
+```
+
+###Prey biomass summaries
+```{r}
+#Percent Biomass Grouping by Region and Size Class
+
+#All eels
+eeldiet_biomass_summary <- eeldiet_biomass %>%
+  group_by(Prey) %>%
+  summarise(percent_biomass = (sum(Biomass, na.rm = TRUE) / sum(total_biomass, na.rm = TRUE)) * 100,
+    SE= sd((prop_biomass),na.rm=T)/ sqrt(n()),
+    sample_size = n()) %>%
+  arrange(desc(percent_biomass))
+eeldiet_biomass_summary
+
+#By Region
+eeldiet_biomass_region <- eeldiet_biomass %>%
+  group_by(Prey, Region) %>%
+  filter(Region != "NA")%>%
+  summarise(
+    percent_biomass = (sum(Biomass, na.rm = TRUE) / sum(total_biomass, na.rm = TRUE)) * 100,
+    SE= sd(prop_biomass,na.rm=T)/ sqrt(n()),
+    sample_size = n()) %>%
+  arrange(Region, desc(percent_biomass))
+
+#By Size Class
+eeldiet_biomass_summary_size <- eeldiet_biomass %>%
+  filter(Region != "NA") %>%
+  group_by(Prey, Size_class) %>%
+  summarise(
+    percent_biomass = (sum(Biomass, na.rm = TRUE) / sum(total_biomass, na.rm = TRUE)) * 100,
+    SE = sd(prop_biomass, na.rm = TRUE) / sqrt(n()),
+    sample_size = n()) %>%
+  arrange(Size_class, desc(percent_biomass))
+
+#By Region and Size Class
+eeldiet_biomass_summary_size_region <- eeldiet_biomass %>%
+  group_by(Prey, Size_class, Region) %>%
+  filter(Region != "NA") %>%
+  summarise(
+    percent_biomass = round((sum(Biomass, na.rm = TRUE) / sum(total_biomass, na.rm = TRUE)) * 100, 2),
+    SE= sd(prop_biomass,na.rm=T)/ sqrt(n()),
+    sample_size = n()) %>%
+  arrange(Region, Size_class, desc(percent_biomass))
+```
+##Prey Specific Abundance
+```{r}
+#averaged across eels to achieve prey importance equaling to 100%
+spec.abundance = eeldiet_biomass %>%
+  group_by(Prey) %>%
+  filter(prop_biomass > 0)%>%
+ summarise(specific_abundance = mean(prop_biomass), sample_size=n())
+spec.abundance
+
+SpecAbun_Region = eeldiet_biomass %>%
+  group_by(Prey, Region) %>%
+  filter(Region != "NA", prop_biomass > 0) %>%
+  summarise(specific_abundance = mean(prop_biomass), sample_size=n())
+SpecAbun_Region
+
+SpecAbun_Size = eeldiet_biomass %>%
+  group_by(Prey, Size_class) %>%
+  filter(prop_biomass > 0) %>%
+  summarise(specific_abundance = mean(prop_biomass), sample_size=n())
+SpecAbun_Size
+
+SpecAbun_Region_Size = eeldiet_biomass %>%
+  group_by(Prey, Region, Size_class) %>%
+   filter(Region != "NA", prop_biomass > 0) %>%
+  summarise(specific_abundance = mean(prop_biomass), sample_size=n())
+SpecAbun_Region_Size
+```
+
+Arranging occurrence data tables for Prey Importance calculations
+```{r}
+#Merging specific abundance and percent occurrence into the same data frames
+##Filtering occurrence tables to take out 0 values
+diet_occurences_summary_Prey = diet_occurences_summary_Prey %>%
+  group_by(Prey) %>%
+  filter(percent_occurrence > 0) %>%
+  arrange(Prey)
+diet_occurences_summary_Prey
+
+diet_occurences_summary_Region = diet_occurences_summary_Region %>%
+  group_by(Prey, Region) %>%
+  filter(percent_occurrence > 0) %>%
+  arrange(Prey)
+diet_occurences_summary_Region
+
+diet_occurences_summary_size = diet_occurences_summary_size %>%
+  group_by(Prey, Size_class) %>%
+  filter(percent_occurrence > 0) %>%
+  arrange(Prey)
+diet_occurences_summary_size
+
+diet_occurences_summary_Region_Size = diet_occurences_summary_Region_Size %>%
+  group_by(Prey, Size_class, Region) %>%
+  filter(percent_occurrence > 0) %>%
+  arrange(Prey)
+diet_occurences_summary_Region_Size
+
+##Merging occurrence and specific abundance tables
+PI = right_join(diet_occurences_summary_Prey, spec.abundance, by = c('Prey'))
+
+PI_Region = right_join(diet_occurences_summary_Region, SpecAbun_Region, by = c('Prey', 'Region'))
+
+PI_Size = right_join(diet_occurences_summary_size, SpecAbun_Size, by = c('Prey', 'Size_class'))
+
+PI_Region_Size = right_join(diet_occurences_summary_Region_Size, SpecAbun_Region_Size, by = c('Prey', 'Size_class', 'Region'))
+```
+
+
+#Prey Importance
+```{r}
+#Just by prey
+PI= PI %>%
+  mutate(prey_importance = ((specific_abundance)*(frequency_occurrence)))%>%
+  filter(Prey != "Crustaceans")
+PI = right_join(eeldiet_biomass_summary, PI , by = c('Prey'))%>%
+  dplyr::select(Prey, occurrence, percent_occurrence, percent_biomass, SE,specific_abundance, prey_importance)%>%
+   mutate(
+    percent_occurrence = round(percent_occurrence, 1),
+    SE = round(SE, 2),
+    percent_biomass = round(percent_biomass, 8),
+    specific_abundance = round(specific_abundance, 1),
+    prey_importance = round(prey_importance, 1)) %>%
+  arrange(desc(prey_importance))
+
+#Region
+PI_Region = PI_Region %>%
+  mutate(prey_importance = ((specific_abundance)*(frequency_occurrence)))%>%
+  filter(Prey != "Crustaceans", Region != "NA")
+PI_Region= right_join(eeldiet_biomass_region, PI_Region , by = c('Prey', 'Region'))%>%
+  dplyr::select(Region, Prey, N, occurrence, percent_occurrence, percent_biomass, SE,specific_abundance, prey_importance) %>%
+   mutate(
+    percent_occurrence = round(percent_occurrence, 1),
+    SE = round(SE, 4),
+    percent_biomass = round(percent_biomass, 4),
+    specific_abundance = round(specific_abundance, 1),
+    prey_importance = round(prey_importance, 1)) %>%
+  arrange(Region, desc(prey_importance))
+
+#Size
+PI_Size = PI_Size %>%
+  mutate(prey_importance = ((specific_abundance)*(frequency_occurrence)))%>%
+  filter(Prey != "Crustaceans")
+PI_Size = right_join(eeldiet_biomass_summary_size, PI_Size , by = c('Prey', 'Size_class'))%>%
+  dplyr::select(Size_class, Prey, N, occurrence, percent_occurrence, percent_biomass, SE,specific_abundance, prey_importance)%>%
+  mutate(
+    percent_occurrence = round(percent_occurrence, 1),
+    SE = round(SE, 4),
+    percent_biomass = round(percent_biomass, 4),
+    specific_abundance = round(specific_abundance, 1),
+    prey_importance = round(prey_importance, 1),) %>%
+  arrange(Size_class, desc(prey_importance))
+
+#Region and Size
+PI_Region_Size = PI_Region_Size %>%
+  mutate(prey_importance = ((specific_abundance)*(frequency_occurrence)))%>%
+  filter(Prey != "Crustaceans", Region != "NA")
+PI_Region_Size = right_join(eeldiet_biomass_summary_size_region, PI_Region_Size , by = c('Prey', 'Size_class', 'Region'))%>%
+  dplyr::select(Prey, Region,Size_class, sample_size.y, occurrence, percent_occurrence, percent_biomass, SE,specific_abundance, prey_importance) %>%
+   mutate(
+    percent_occurrence = round(percent_occurrence, 2),
+    SE = round(SE, 2),
+    prey_importance = round(prey_importance, 1)) %>%
+  arrange(Region, Size_class, desc(prey_importance))
+PI_Region_Size
+```
+
+###Stacked PI Plot: Region+Size
+```{r}
+sample_sizes <- data.frame(
+  Region = c("PHD","PHD","PHD","PHD", "TSL","TSL","TSL","TSL", "WCA 3B","WCA 3B","WCA 3B","WCA 3B","SRS", "SRS","SRS","SRS", "WCA 3A","WCA 3A","WCA 3A","WCA 3A"),
+  Size_class = c("A", "B", "C", "D"), 
+  sample_size = c(50,86,34,32,22,59,47,47,6,21,28,4,11,19,12,16,26,97,27,17))
+
+PI_Region_Size$Prey <- factor(PI_Region_Size$Prey,
+  levels = c("Miscellaneous", "Unknown_Insects",  
+             "Coleoptera", "Diptera", "Gastropoda","Amphipoda", "Shrimp", 
+             "Hemiptera", "Fish", "Crayfish", "Odonata"))
+
+PI_Region_Size$Region <- factor(
+  PI_Region_Size$Region,
+  levels = c("PHD", "TSL", "WCA 3B", "SRS", "WCA 3A"))
+
+# Merge sample sizes with main data for correct mapping
+PI_Region_Size <- merge(PI_Region_Size, sample_sizes, by = c("Region", "Size_class")) %>% mutate(Size_class_label = dplyr::recode(as.character(Size_class),
+                                         "A" = "<300",
+                                         "B" = "300-450",
+                                         "C" = "450-600",
+                                         "D" = ">600"))
+
+# Create the plot with sample sizes above columns
+PI_Region_Size_graph <- ggplot(PI_Region_Size, aes(x = Size_class_label, y = prey_importance, fill = Prey)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(
+  labels = function(x) x * 100,
+  breaks = seq(0, 1, 0.2))+
+  scale_x_discrete(limits = c("<300", "300-450", "450-600", ">600")) +
+  scale_fill_manual(name = "Prey type",
+                    values = c("Crayfish" = "#B22222", 
+                               "Fish" = "#004080", 
+                               "Gastropoda" = "#006400", 
+                               "Hemiptera" = "#808000", 
+                               "Odonata" = "#654321",
+                               "Shrimp" = "#FC8EAC",
+                               "Unknown_Insects" = "#9370DB",
+                               "Miscellaneous" = "#FF8C00",
+                               "Diptera" = "#00BFFF",
+                               "Coleoptera" = "#32CD32",
+                               "Amphipoda" = "#FF4500"),
+  labels = c(
+    "Crayfish" = "Crayfish",
+    "Fish" = "Fish",
+    "Gastropoda" = "Snails",
+    "Hemiptera" = "Aquatic bugs",
+    "Odonata" = "Dragonfly naiads",
+    "Shrimp" = "Grass shrimp",
+    "Unknown_Insects" = "Unknown insects",
+    "Miscellaneous" = "Miscellaneous",
+    "Diptera" = "Fly larvae",
+    "Coleoptera" = "Beetles",
+    "Amphipoda" = "Amphipods")) +
+  labs(y = "Prey importance", x = "Size class (mm)") +
+  theme_minimal() +
+  facet_wrap(
+  ~ Region,
+  nrow = 1,
+  labeller = labeller(
+    Region = c(
+      "PHD" = "PHD\n(8 years)",
+      "TSL" = "TSL\n(8 years)",
+      "WCA 3B" = "WCA 3B\n(4 years)",
+      "SRS" = "SRS\n(3 years)",
+      "WCA 3A" = "WCA 3A\n(2 years)"))) + 
+  theme(
+    axis.title.x = element_text(size = 10, margin = margin(t = 3)),  
+    axis.title.y = element_text(size = 10),  
+    axis.text.x = element_text(size = 9, angle = 45, hjust = 1, margin = margin(t = -7)),  
+    axis.text.y = element_text(size = 9),  
+    legend.title = element_text(size = 9, hjust = 0.5, vjust = 0.5),  
+    legend.text = element_text(size = 8),  
+    legend.position = "right",  
+    legend.justification = "left", 
+     legend.key.size = unit(0.3, "cm"),
+    panel.spacing = unit(1, "lines"),
+    strip.text = element_text(size = 9, margin = margin(t = 5, b = 0)), strip.background = element_blank(),
+  panel.grid = element_blank())+
+  geom_text(data = PI_Region_Size,
+          aes(x = Size_class_label, y = 1.03, label = sample_size),
+          inherit.aes = FALSE,size = 3.00,fontface = "plain")
+PI_Region_Size_graph
+ggsave("Stacked_Plot_Region_Size__.eps", PI_Region_Size_graph, width = 6, height = 4, dpi = 800)
+```
+
+
+
